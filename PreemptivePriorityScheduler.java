@@ -1,17 +1,25 @@
 import javax.swing.*;
-import javax.swing.table.*;
+import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.awt.event.*;
 import java.util.*;
 import java.util.List;
 
 public class PreemptivePriorityScheduler extends JFrame {
+    private static final int MIN_PROCS = 2;
+    private static final int MAX_PROCS = 15;
+
     private DefaultTableModel procTableModel;
     private JTable procTable;
     private DefaultTableModel resultTableModel;
     private JTable resultTable;
     private GanttPanel ganttPanel;
     private JLabel avgLabel;
+
+    private JButton addBtn;
+    private JButton removeBtn;
+    private JButton sampleBtn;
+    private JButton clearBtn;
+    private JButton runBtn;
 
     private int nextPid = 1;
 
@@ -21,15 +29,19 @@ public class PreemptivePriorityScheduler extends JFrame {
         setSize(900, 650);
         setLocationRelativeTo(null);
         initUI();
+        setVisible(true);
     }
 
     private void initUI() {
         procTableModel = new DefaultTableModel(new Object[]{"PID", "Arrival", "Burst", "Priority"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column != 0; 
+                return column != 0;
             }
         };
+
+        procTableModel.addTableModelListener(ev -> updateControls());
+
         procTable = new JTable(procTableModel);
         procTable.setFillsViewportHeight(true);
         procTable.getColumnModel().getColumn(0).setMaxWidth(60);
@@ -37,16 +49,16 @@ public class PreemptivePriorityScheduler extends JFrame {
         JScrollPane procScroll = new JScrollPane(procTable);
         procScroll.setPreferredSize(new Dimension(420, 200));
 
-        JButton addBtn = new JButton("Add Row");
-        JButton removeBtn = new JButton("Remove Row");
-        JButton sampleBtn = new JButton("Auto Fill Sample");
-        JButton clearBtn = new JButton("Clear");
-        JButton runBtn = new JButton("Run Scheduler");
+        addBtn = new JButton("Add Row");
+        removeBtn = new JButton("Remove Row");
+        sampleBtn = new JButton("Auto Fill Sample");
+        clearBtn = new JButton("Clear");
+        runBtn = new JButton("Run Scheduler");
 
         addBtn.addActionListener(e -> addRow());
         removeBtn.addActionListener(e -> removeSelectedRows());
         clearBtn.addActionListener(e -> clearAll());
-        sampleBtn.addActionListener(e -> fillSample());
+        sampleBtn.addActionListener(e -> { fillSample(); updateControls(); });
         runBtn.addActionListener(e -> runScheduler());
 
         JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -91,10 +103,28 @@ public class PreemptivePriorityScheduler extends JFrame {
         getContentPane().add(center, BorderLayout.CENTER);
 
         fillDefault();
+        updateControls();
+    }
+
+    private void updateControls() {
+        int rows = procTableModel.getRowCount();
+        addBtn.setEnabled(rows < MAX_PROCS);
+        runBtn.setEnabled(rows >= MIN_PROCS && rows <= MAX_PROCS);
+        removeBtn.setEnabled(rows > 0);
     }
 
     private void addRow() {
+        int rows = procTableModel.getRowCount();
+        if (rows >= MAX_PROCS) {
+            JOptionPane.showMessageDialog(this,
+                    "Cannot add more than " + MAX_PROCS + " processes.",
+                    "Process Limit Reached",
+                    JOptionPane.WARNING_MESSAGE);
+            addBtn.setEnabled(false);
+            return;
+        }
         procTableModel.addRow(new Object[]{nextPid++, 0, 1, 1});
+        updateControls();
     }
 
     private void removeSelectedRows() {
@@ -107,24 +137,34 @@ public class PreemptivePriorityScheduler extends JFrame {
         for (int i = rows.length - 1; i >= 0; i--) {
             procTableModel.removeRow(rows[i]);
         }
+        updateControls();
     }
 
     private void fillDefault() {
         procTableModel.setRowCount(0);
+        nextPid = 1;
         procTableModel.addRow(new Object[]{nextPid++, 0, 5, 2});
         procTableModel.addRow(new Object[]{nextPid++, 1, 3, 1});
         procTableModel.addRow(new Object[]{nextPid++, 2, 8, 3});
         procTableModel.addRow(new Object[]{nextPid++, 3, 6, 2});
+        updateControls();
     }
 
     private void fillSample() {
         procTableModel.setRowCount(0);
         nextPid = 1;
-        procTableModel.addRow(new Object[]{nextPid++, 0, 4, 2});
-        procTableModel.addRow(new Object[]{nextPid++, 1, 3, 1});
-        procTableModel.addRow(new Object[]{nextPid++, 2, 1, 4});
-        procTableModel.addRow(new Object[]{nextPid++, 3, 2, 2});
-        procTableModel.addRow(new Object[]{nextPid++, 5, 4, 1});
+        Object[][] sample = {
+                {nextPid++, 0, 4, 2},
+                {nextPid++, 1, 3, 1},
+                {nextPid++, 2, 1, 4},
+                {nextPid++, 3, 2, 2},
+                {nextPid++, 5, 4, 1}
+        };
+        for (Object[] r : sample) {
+            if (procTableModel.getRowCount() >= MAX_PROCS) break;
+            procTableModel.addRow(r);
+        }
+        updateControls();
     }
 
     private void clearAll() {
@@ -133,14 +173,20 @@ public class PreemptivePriorityScheduler extends JFrame {
         ganttPanel.setSegments(Collections.emptyList(), 0);
         avgLabel.setText("Average Waiting Time: -    Average Turnaround Time: -");
         nextPid = 1;
+        updateControls();
     }
 
     private void runScheduler() {
         int rows = procTableModel.getRowCount();
-        if (rows == 0) {
-            JOptionPane.showMessageDialog(this, "No processes defined. Add some rows or click Auto Fill Sample.", "No processes", JOptionPane.WARNING_MESSAGE);
+
+        if (rows < MIN_PROCS || rows > MAX_PROCS) {
+            JOptionPane.showMessageDialog(this,
+                    "The scheduler requires at least " + MIN_PROCS + " processes and a maximum of " + MAX_PROCS + " processes.",
+                    "Invalid Number of Processes",
+                    JOptionPane.ERROR_MESSAGE);
             return;
         }
+
         List<Proc> procs = new ArrayList<>();
         for (int i = 0; i < rows; i++) {
             try {
@@ -165,7 +211,8 @@ public class PreemptivePriorityScheduler extends JFrame {
         double totWait = 0;
         double totTurn = 0;
         List<Proc> sorted = new ArrayList<>(result.finalProcs);
-        sorted.sort(Comparator.comparingInt(p -> p.pid));
+
+        Collections.sort(sorted, (a, b) -> Integer.compare(a.pid, b.pid));
         for (Proc p : sorted) {
             resultTableModel.addRow(new Object[]{p.pid, p.arrival, p.burstOriginal, p.priority, p.waitingTime, p.turnaroundTime});
             totWait += p.waitingTime;
@@ -183,14 +230,11 @@ public class PreemptivePriorityScheduler extends JFrame {
         List<Proc> procs = new ArrayList<>();
         for (Proc p : inputProcs) procs.add(new Proc(p.pid, p.arrival, p.burstOriginal, p.priority));
 
-        procs.sort(Comparator.comparingInt(a -> a.arrival));
+        Collections.sort(procs, Comparator.comparingInt(a -> a.arrival));
 
         int time = 0;
         int completed = 0;
         int n = procs.size();
-
-        Map<Integer, Proc> pidMap = new HashMap<>();
-        for (Proc p : procs) pidMap.put(p.pid, p);
 
         List<GanttSegment> segments = new ArrayList<>();
 
@@ -205,28 +249,25 @@ public class PreemptivePriorityScheduler extends JFrame {
 
             Proc toRun = null;
             if (!ready.isEmpty()) {
-                toRun = ready.stream()
-                        .min(Comparator.comparingInt((Proc p) -> p.priority)
-                                .thenComparingInt(p -> p.arrival)
-                                .thenComparingInt(p -> p.pid))
-                        .get();
+                toRun = Collections.min(ready, (a, b) -> {
+                    int cmp = Integer.compare(a.priority, b.priority);
+                    if (cmp != 0) return cmp;
+                    cmp = Integer.compare(a.arrival, b.arrival);
+                    if (cmp != 0) return cmp;
+                    return Integer.compare(a.pid, b.pid);
+                });
             }
 
             if (toRun == null) {
                 if (current == null || current.pid != -1) {
-                    if (current != null) {
-                        segments.add(new GanttSegment(current.pid, segStart, time));
-                    }
-                    current = new Proc(-1, time, 0, Integer.MAX_VALUE); 
+                    if (current != null) segments.add(new GanttSegment(current.pid, segStart, time));
+                    current = new Proc(-1, time, 0, Integer.MAX_VALUE);
                     segStart = time;
                 }
                 time++;
-                continue;
             } else {
                 if (current == null || current.pid != toRun.pid) {
-                    if (current != null) {
-                        segments.add(new GanttSegment(current.pid, segStart, time));
-                    }
+                    if (current != null) segments.add(new GanttSegment(current.pid, segStart, time));
                     current = toRun;
                     segStart = time;
                 }
@@ -239,11 +280,7 @@ public class PreemptivePriorityScheduler extends JFrame {
             }
         }
 
-
-        if (current != null) {
-            segments.add(new GanttSegment(current.pid, segStart, time));
-        }
-
+        if (current != null) segments.add(new GanttSegment(current.pid, segStart, time));
 
         List<Proc> finalProcs = new ArrayList<>();
         for (Proc p : procs) {
@@ -254,7 +291,6 @@ public class PreemptivePriorityScheduler extends JFrame {
 
         return new SchedulingResult(segments, finalProcs, time);
     }
-
 
     private static class Proc {
         int pid;
@@ -273,27 +309,18 @@ public class PreemptivePriorityScheduler extends JFrame {
             this.remaining = burst;
             this.priority = priority;
         }
-
-        @Override
-        public String toString() {
-            return String.format("P%d(a=%d,b=%d,pr=%d,rem=%d)", pid, arrival, burstOriginal, priority, remaining);
-        }
     }
 
     private static class GanttSegment {
         int pid;
         int start;
         int end;
-        Color color; 
+        Color color;
 
         GanttSegment(int pid, int start, int end) {
             this.pid = pid;
             this.start = start;
             this.end = end;
-        }
-
-        int length() {
-            return end - start;
         }
     }
 
@@ -317,14 +344,13 @@ public class PreemptivePriorityScheduler extends JFrame {
             this.segments = new ArrayList<>();
             Map<Integer, Color> colorMap = new HashMap<>();
             for (GanttSegment s : segs) {
-                if (!colorMap.containsKey(s.pid)) {
-                    colorMap.put(s.pid, colorForPid(s.pid));
-                }
+                if (!colorMap.containsKey(s.pid)) colorMap.put(s.pid, colorForPid(s.pid));
                 GanttSegment copy = new GanttSegment(s.pid, s.start, s.end);
                 copy.color = colorMap.get(s.pid);
                 this.segments.add(copy);
             }
-            this.totalTime = Math.max(1, totalTime); 
+            this.totalTime = Math.max(1, totalTime);
+            setPreferredSize(new Dimension(Math.max(800, this.totalTime * 20), 280));
         }
 
         private static Color colorForPid(int pid) {
@@ -383,7 +409,6 @@ public class PreemptivePriorityScheduler extends JFrame {
                 int textX = sx + Math.max(2, (segW - textW)/2);
                 int textY = chartY + (chartH + fm.getAscent())/2 - 4;
                 if (segW < textW + 6) {
-
                     String shortLabel = label;
                     if (segW < 20) shortLabel = label.substring(0, Math.min(3, label.length()));
                     g2.setColor(Color.BLACK);
@@ -406,35 +431,11 @@ public class PreemptivePriorityScheduler extends JFrame {
                 g2.drawString(ts, tx, y2 + fm.getAscent()+2);
             }
 
-            int lx = chartX;
-            int ly = chartY + chartH + 30;
-            int legendItemW = 110;
-            Set<Integer> added = new LinkedHashSet<>();
-            for (GanttSegment s : segments) {
-                if (added.contains(s.pid)) continue;
-                added.add(s.pid);
-            }
-            int idx = 0;
-            for (Integer pid : added) {
-                int px = lx + (idx % 6) * legendItemW;
-                int py = ly + (idx / 6) * 20;
-                Color c = colorForPid(pid);
-                g2.setColor(c);
-                g2.fillRect(px, py - 12, 12, 12);
-                g2.setColor(Color.BLACK);
-                String txt = (pid == -1) ? "IDLE" : "P" + pid;
-                g2.drawString(txt, px + 18, py - 2);
-                idx++;
-            }
-
             g2.dispose();
         }
     }
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            PreemptivePriorityScheduler app = new PreemptivePriorityScheduler();
-            app.setVisible(true);
-        });
+        SwingUtilities.invokeLater(() -> new PreemptivePriorityScheduler());
     }
 }
